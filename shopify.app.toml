@@ -28,5 +28,4 @@ scopes = "write_products"
 redirect_urls = [ "https://example.com/api/auth" ]
 
 [pos]
-enabled = true
 embedded = true

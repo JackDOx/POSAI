@@ -1,0 +1,18 @@
+api_version = "2025-10"
+
+[[extensions]]
+type = "ui_extension"
+name = "pos-tile"
+uid = "85595fd3-e79c-6059-a8c5-816f9ee873f66d45a3af"
+handle = "pos-tile"
+description = "A preact POS UI extension"
+
+# module: file that contains your extension’s source code
+# target: location where your extension appears in POS
+[[extensions.targeting]]
+module = "./src/Tile.jsx"
+target = "pos.home.tile.render"
+
+[[extensions.targeting]]
+module = "./src/Modal.jsx"
+target = "pos.home.modal.render"
