@@ -1,15 +1,10 @@
 import {render} from 'preact';
 
-export default function extension() {
-  render(<SmartGridModal />, document.body);
+export default async () => {
+  render(<Extension />, document.body);
 }
 
-function SmartGridModal() {
-  const onButtonClick = (type, title, amount) => {
-    shopify.cart.applyCartDiscount(type, title, amount);
-    shopify.toast.show('Discount applied');
-  };
-
+function Extension() {
   return (
     <s-tile
       heading="POS smart grid"

@@ -7,19 +7,28 @@ export default function extension() {
 
 function Extension() {
   const [cart, setCart] = useState(null);
+  const [error, setError] = useState(null);
 
-useEffect(() => {
-  if (!shopify.cart || !shopify.cart.current) {
-    console.error('shopify.cart.current is not available');
-    return;
-  }
-  const unsubscribe = shopify.cart.current.subscribe((currentCart) => {
-    setCart(currentCart);
-  });
-  // shopify.toast.show('Subscribed to cart updates');
-  return unsubscribe;
-}, []);
+  useEffect(() => {
+    let unsubscribe;
+    console.log('shopify.cart:', shopify.cart.current);
+    try {
+      if (shopify.cart && shopify.cart.current && shopify.cart.current.subscribe) {
+        unsubscribe = shopify.cart.current.subscribe((currentCart) => {
+          setCart(currentCart);
+        });
+      } else {
+        setError('Cart API not available');
+      }
+    } catch (e) {
+      setError('Cart API not available');
+    }
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
 
+  if (error) return <div style={{color: 'red'}}>Error: {error}</div>;
   if (!cart) return <div>Loading cart...</div>;
 
   return (
