@@ -11,9 +11,39 @@ export default function extension() {
 
 function Modal() {
   const [cart, setCart] = useState(shopify.cart.current.value);
-  const [showBanner, setShowBanner] = useState(false);
   const [recommendations, setRecommendations] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [addedVariantIds, setAddedVariantIds] = useState([]);
+
+  // Banner state
+  const [bannerStatus, setBannerStatus] = useState('idle'); // 'idle' | 'loading' | 'success' | 'empty' | 'error'
+
+  const [bannerHeading, setBannerHeading] = useState(
+    'Tap “Show upsell” to fetch recommendations'
+  );
+  const [bannerVisible, setBannerVisible] = useState(true);
+
+  /**
+   * Map internal status to Banner tone.
+   * @param {string} status
+   * @returns {'info' | 'warning' | 'critical' | 'success' | 'auto'}
+   */
+  function mapStatusToTone(status) {
+    switch (status) {
+      case 'success':
+        return 'success';
+      case 'empty':
+        return 'warning';
+      case 'error':
+        return 'critical';
+      case 'loading':
+        return 'info';
+      case 'idle':
+      default:
+        return 'info';
+    }
+  }
+
 
   // --- Sync cart with POS ---
   useEffect(() => {
@@ -41,11 +71,35 @@ function Modal() {
       : str;
   }
 
+  async function handleAddToCart(variantIdString) {
+    const variantId = Number(variantIdString);
+
+    if (!Number.isFinite(variantId)) {
+      console.error('Invalid variant id:', variantIdString);
+      shopify.toast.show('Unable to add item (invalid variant id)');
+      return;
+    }
+
+    try {
+      await shopify.cart.addLineItem(variantId, 1);
+      shopify.toast.show('Item added to cart');
+
+      setAddedVariantIds((prev) =>
+        prev.includes(variantIdString) ? prev : [...prev, variantIdString]
+      );
+    } catch (err) {
+      console.error('Failed to add line item:', err);
+      shopify.toast.show('Failed to add item to cart');
+    }
+  }
+
   // --- Fetch Admin images for recommended variants ---
   async function hydrateRecommendationsWithImages(baseRecs) {
     if (!baseRecs || baseRecs.length === 0) return baseRecs;
 
-    const variantGids = baseRecs.map((rec) => `gid://shopify/ProductVariant/${rec.variantId}`);
+    const variantGids = baseRecs.map(
+      (rec) => `gid://shopify/ProductVariant/${rec.variantId}`
+    );
 
     const query = `#graphql
       query VariantImages($ids: [ID!]!) {
@@ -83,7 +137,6 @@ function Modal() {
     const json = await res.json();
     const nodes = json?.data?.nodes || [];
 
-    // Map gid -> image
     const imageByVariantId = {};
     const prefix = 'gid://shopify/ProductVariant/';
 
@@ -94,7 +147,6 @@ function Modal() {
         ? node.id.slice(prefix.length)
         : node.id;
 
-      // Prefer variant image, otherwise fall back to product featured image
       const imgNode = node.image || node.product?.featuredImage;
       if (!imgNode) continue;
 
@@ -108,13 +160,15 @@ function Modal() {
       ...rec,
       image: imageByVariantId[rec.variantId] || null,
     }));
-
   }
 
   // --- Fetch recommendations from your backend ---
   const handleButtonClick = async () => {
     if (!cart || !cart.lineItems || cart.lineItems.length === 0) {
       shopify.toast.show('Cart is empty');
+      setBannerStatus('warning');
+      setBannerHeading('Cart is empty. Add items before fetching upsells');
+      setBannerVisible(true);
       return;
     }
 
@@ -124,11 +178,16 @@ function Modal() {
 
     if (cartVariantIds.length === 0) {
       shopify.toast.show('No variant IDs found in cart');
+      setBannerStatus('warning');
+      setBannerHeading('No variant IDs found in cart');
+      setBannerVisible(true);
       return;
     }
 
     setLoading(true);
-    setShowBanner(false);
+    setBannerStatus('info');
+    setBannerHeading('Fetching upsell recommendations…');
+    setBannerVisible(true);
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/recommendations`, {
@@ -140,21 +199,36 @@ function Modal() {
       });
 
       if (!res.ok) {
+        // Bad status code → critical
+        setBannerStatus('critical');
+        setBannerHeading('Upsell fetch failed. Contact developer');
+        setRecommendations([]);
         throw new Error(`HTTP ${res.status}`);
       }
 
       const data = await res.json();
       const baseRecs = data.recommendations || [];
 
-      // Enrich with images from Admin API
       const recsWithImages = await hydrateRecommendationsWithImages(baseRecs);
       setRecommendations(recsWithImages);
 
-      setShowBanner(true);
-      shopify.toast.show('Upsell suggestions ready');
+      if (recsWithImages.length === 0) {
+        // No items returned → warning
+        setBannerStatus('warning');
+        setBannerHeading('No upsell recommendations found for this cart');
+      } else {
+        // Success → success
+        setBannerStatus('success');
+        setBannerHeading('Upsell recommendations found');
+      }
     } catch (err) {
       console.error('Failed to fetch recommendations:', err);
       shopify.toast.show('Failed to fetch recommendations');
+      // We already set critical above for bad HTTP, but keep a fallback:
+      if (bannerStatus !== 'critical') {
+        setBannerStatus('critical');
+        setBannerHeading('Upsell fetch failed. Contact developer');
+      }
     } finally {
       setLoading(false);
     }
@@ -162,53 +236,88 @@ function Modal() {
 
   // ---- UI ----
   return (
-    <s-page heading="POS smart upsell">
+    <s-page heading="POSAI smart upsell">
       <s-scroll-box>
         <s-box padding="small">
-
-          {showBanner && (
-            <s-banner heading="Upsell applied" tone="success">
-              Recommendations have been updated.
+          {/* Status banner: always rendered, tone + text driven by state */}
+          {bannerVisible && (
+            <s-banner heading={bannerHeading} tone= {mapStatusToTone(bannerStatus)}>
+              <s-button
+                slot="primary-action"
+                onClick={() => setBannerVisible(false)}
+              >
+                Dismiss
+              </s-button>
             </s-banner>
           )}
 
           <s-section heading="Recommended products">
             {loading && <s-text>Loading recommendations…</s-text>}
 
-          {!loading && recommendations.length > 0 && (
-            <s-stack gap="base">
-              {recommendations.map((rec) => (
-                <s-box key={rec.variantId} padding="small">
-                  <s-stack direction="inline" gap="base">
-                    {rec.image?.url && (
-                      <s-box inlineSize="64px" blockSize="64px">
-                        <s-image
-                          src={rec.image.url}
-                          inlineSize="fill"
-                          objectFit="cover"
-                        />
+            {!loading && recommendations.length > 0 && (
+              <s-stack gap="base">
+                {recommendations.map((rec) => {
+                  const isAdded = addedVariantIds.includes(rec.variantId);
+
+                  return (
+                    <s-clickable
+                      key={rec.variantId}
+                      onClick={() => {
+                        handleAddToCart(rec.variantId);
+                      }}
+                    >
+                      <s-box padding="small">
+                        <s-stack
+                          direction="inline"
+                          gap="base"
+                          justifyContent="space-between"
+                          alignItems="center"
+                        >
+                          {/* Left: image + product info */}
+                          <s-stack direction="inline" gap="base">
+                            {rec.image?.url && (
+                              <s-box inlineSize="64px" blockSize="64px">
+                                <s-image
+                                  src={rec.image.url}
+                                  inlineSize="fill"
+                                  objectFit="cover"
+                                />
+                              </s-box>
+                            )}
+
+                            <s-box>
+                              <s-text>{rec.productTitle}</s-text>
+                              <s-text color="subdued">
+                                {rec.variantTitle}
+                              </s-text>
+
+                              <s-text>${rec.price}</s-text>
+                              <s-text color="subdued">
+                                Inventory: {rec.inventoryQuantity}
+                              </s-text>
+                            </s-box>
+                          </s-stack>
+
+                          {/* Right: text + icon + badge */}
+                          <s-stack
+                            direction="inline"
+                            gap="small"
+                            alignItems="center"
+                          >
+                            <s-text color="subdued">Add to cart</s-text>
+                            <s-icon type="cart" />
+                            <s-badge tone={isAdded ? 'success' : 'neutral'}>
+                              {isAdded ? 'Added' : 'Suggested'}
+                            </s-badge>
+                          </s-stack>
+                        </s-stack>
                       </s-box>
-                    )}
-
-                    <s-box>
-                      <s-text>{rec.productTitle}</s-text>
-                      <s-text color="subdued">{rec.variantTitle}</s-text>
-
-                      <s-text>${rec.price}</s-text>
-                      <s-text color="subdued">
-                        Inventory: {rec.inventoryQuantity}
-                      </s-text>
-                    </s-box>
-                  </s-stack>
-                </s-box>
-              ))}
-            </s-stack>
-          )}
-
-
-
-
-
+                    </s-clickable>
+                  );
+                })}
+                <s-divider direction="block" />
+              </s-stack>
+            )}
           </s-section>
 
           <s-section>
@@ -220,7 +329,6 @@ function Modal() {
               {loading ? 'Fetching…' : 'Show upsell'}
             </s-button>
           </s-section>
-
         </s-box>
       </s-scroll-box>
     </s-page>
