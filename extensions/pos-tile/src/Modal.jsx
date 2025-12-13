@@ -3,7 +3,7 @@ import '@shopify/ui-extensions/preact';
 import {render} from 'preact';
 import {useState, useEffect} from 'preact/hooks';
 
-const API_BASE_URL = "https://posai-backend-recommender-production.up.railway.app";
+const API_BASE_URL = 'https://posai-backend-recommender-production.up.railway.app';
 
 export default function extension() {
   render(<Modal />, document.body);
@@ -17,17 +17,11 @@ function Modal() {
 
   // Banner state
   const [bannerStatus, setBannerStatus] = useState('idle'); // 'idle' | 'loading' | 'success' | 'empty' | 'error'
-
   const [bannerHeading, setBannerHeading] = useState(
-    'Tap “Show upsell” to fetch recommendations'
+    'Tap “Show upsell” to fetch recommendations',
   );
   const [bannerVisible, setBannerVisible] = useState(true);
 
-  /**
-   * Map internal status to Banner tone.
-   * @param {string} status
-   * @returns {'info' | 'warning' | 'critical' | 'success' | 'auto'}
-   */
   function mapStatusToTone(status) {
     switch (status) {
       case 'success':
@@ -44,7 +38,6 @@ function Modal() {
     }
   }
 
-
   // --- Sync cart with POS ---
   useEffect(() => {
     const unsubscribe = shopify.cart.current.subscribe((nextCart) => {
@@ -56,19 +49,12 @@ function Modal() {
 
   // --- Extract numeric variantId from a line item ---
   function getVariantIdFromLineItem(lineItem) {
-    const raw =
-      lineItem.variantId ||
-      lineItem.productVariantId ||
-      lineItem.id;
-
+    const raw = lineItem.variantId || lineItem.productVariantId || lineItem.id;
     if (!raw) return null;
 
     const str = String(raw);
     const gidPrefix = 'gid://shopify/ProductVariant/';
-
-    return str.startsWith(gidPrefix)
-      ? str.slice(gidPrefix.length)
-      : str;
+    return str.startsWith(gidPrefix) ? str.slice(gidPrefix.length) : str;
   }
 
   async function handleAddToCart(variantIdString) {
@@ -85,11 +71,53 @@ function Modal() {
       shopify.toast.show('Item added to cart');
 
       setAddedVariantIds((prev) =>
-        prev.includes(variantIdString) ? prev : [...prev, variantIdString]
+        prev.includes(variantIdString) ? prev : [...prev, variantIdString],
       );
     } catch (err) {
       console.error('Failed to add line item:', err);
       shopify.toast.show('Failed to add item to cart');
+    }
+  }
+
+  // Add ALL recommended items that aren’t already added
+  async function handleAddAllToCart() {
+    if (!recommendations.length) {
+      shopify.toast.show('No recommendations to add');
+      return;
+    }
+
+    const toAdd = recommendations.filter(
+      (rec) => !addedVariantIds.includes(rec.variantId),
+    );
+
+    if (!toAdd.length) {
+      shopify.toast.show('All recommendations already in cart');
+      return;
+    }
+
+    let addedCount = 0;
+
+    for (const rec of toAdd) {
+      const numericId = Number(rec.variantId);
+      if (!Number.isFinite(numericId)) continue;
+
+      try {
+        await shopify.cart.addLineItem(numericId, 1);
+        addedCount += 1;
+      } catch (err) {
+        console.error('Failed to add item in bulk add:', err);
+      }
+    }
+
+    if (addedCount > 0) {
+      // Mark all of them as added
+      setAddedVariantIds((prev) => {
+        const all = new Set([...prev, ...toAdd.map((r) => r.variantId)]);
+        return Array.from(all);
+      });
+      shopify.toast.show(`Added ${addedCount} item(s) to cart`);
+    } else {
+      shopify.toast.show('No items were added');
     }
   }
 
@@ -98,7 +126,7 @@ function Modal() {
     if (!baseRecs || baseRecs.length === 0) return baseRecs;
 
     const variantGids = baseRecs.map(
-      (rec) => `gid://shopify/ProductVariant/${rec.variantId}`
+      (rec) => `gid://shopify/ProductVariant/${rec.variantId}`,
     );
 
     const query = `#graphql
@@ -125,7 +153,7 @@ function Modal() {
       method: 'POST',
       body: JSON.stringify({
         query,
-        variables: { ids: variantGids },
+        variables: {ids: variantGids},
       }),
     });
 
@@ -185,7 +213,7 @@ function Modal() {
     }
 
     setLoading(true);
-    setBannerStatus('info');
+    setBannerStatus('loading');
     setBannerHeading('Fetching upsell recommendations…');
     setBannerVisible(true);
 
@@ -195,12 +223,11 @@ function Modal() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ cartVariantIds }),
+        body: JSON.stringify({cartVariantIds}),
       });
 
       if (!res.ok) {
-        // Bad status code → critical
-        setBannerStatus('critical');
+        setBannerStatus('error');
         setBannerHeading('Upsell fetch failed. Contact developer');
         setRecommendations([]);
         throw new Error(`HTTP ${res.status}`);
@@ -213,20 +240,17 @@ function Modal() {
       setRecommendations(recsWithImages);
 
       if (recsWithImages.length === 0) {
-        // No items returned → warning
-        setBannerStatus('warning');
+        setBannerStatus('empty');
         setBannerHeading('No upsell recommendations found for this cart');
       } else {
-        // Success → success
         setBannerStatus('success');
         setBannerHeading('Upsell recommendations found');
       }
     } catch (err) {
       console.error('Failed to fetch recommendations:', err);
       shopify.toast.show('Failed to fetch recommendations');
-      // We already set critical above for bad HTTP, but keep a fallback:
-      if (bannerStatus !== 'critical') {
-        setBannerStatus('critical');
+      if (bannerStatus !== 'error') {
+        setBannerStatus('error');
         setBannerHeading('Upsell fetch failed. Contact developer');
       }
     } finally {
@@ -237,20 +261,18 @@ function Modal() {
   // ---- UI ----
   return (
     <s-page heading="POSAI smart upsell">
+      {/* Banner stays fixed at top */}
+      {bannerVisible && (
+        <s-banner heading={bannerHeading} tone={mapStatusToTone(bannerStatus)}>
+          <s-button slot="primary-action" onClick={() => setBannerVisible(false)}>
+            Dismiss
+          </s-button>
+        </s-banner>
+      )}
+
+      {/* Only this area scrolls */}
       <s-scroll-box>
         <s-box padding="small">
-          {/* Status banner: always rendered, tone + text driven by state */}
-          {bannerVisible && (
-            <s-banner heading={bannerHeading} tone= {mapStatusToTone(bannerStatus)}>
-              <s-button
-                slot="primary-action"
-                onClick={() => setBannerVisible(false)}
-              >
-                Dismiss
-              </s-button>
-            </s-banner>
-          )}
-
           <s-section heading="Recommended products">
             {loading && <s-text>Loading recommendations…</s-text>}
 
@@ -319,18 +341,35 @@ function Modal() {
               </s-stack>
             )}
           </s-section>
-
-          <s-section>
-            <s-button
-              variant="primary"
-              onClick={handleButtonClick}
-              disabled={loading}
-            >
-              {loading ? 'Fetching…' : 'Show upsell'}
-            </s-button>
-          </s-section>
         </s-box>
       </s-scroll-box>
+
+      {/* Bottom actions: fixed, 50% width each */}
+      <s-section>
+        <s-box padding="small">
+          <s-stack direction="block" alignItems="center" gap="small">
+            <s-box inlineSize="50%">
+              <s-button
+                variant="primary"
+                onClick={handleButtonClick}
+                disabled={loading}
+              >
+                {loading ? 'Fetching…' : 'Show upsell'}
+              </s-button>
+            </s-box>
+
+            <s-box inlineSize="50%">
+              <s-button
+                variant="secondary"
+                onClick={handleAddAllToCart}
+                disabled={loading || recommendations.length === 0}
+              >
+                Add all to cart
+              </s-button>
+            </s-box>
+          </s-stack>
+        </s-box>
+      </s-section>
     </s-page>
   );
 }
